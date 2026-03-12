@@ -13,6 +13,8 @@ from plexapi.server import PlexServer
 from requests.exceptions import ConnectionError, Timeout
 from unidecode import unidecode
 
+from backend.genre_mapper import expand_tags
+from backend.library_cache import upsert_tags
 from backend.models import PlexClientInfo, PlexPlaylistInfo, Track
 
 logger = logging.getLogger(__name__)
@@ -162,6 +164,43 @@ def is_live_version(track: Any) -> bool:
     return False
 
 
+def get_artist_metadata(artist: Any) -> dict[str, Any]:
+    """Extract and normalize artist metadata."""
+    if not artist:
+        return {"rating_key": "", "genres": [], "styles": []}
+
+    genres = [g.tag.strip().title() for g in getattr(artist, "genres", []) if g.tag and g.tag.strip()]
+    styles = [s.tag.strip().title() for s in getattr(artist, "styles", []) if s.tag and s.tag.strip()]
+
+    return {
+        "rating_key": str(getattr(artist, "ratingKey", "")),
+        "genres": genres,
+        "styles": styles
+    }
+
+
+def sync_tags_for_track(conn: Any, track: Any, album_meta: dict[str, Any], artist_meta: dict[str, Any]) -> bool:
+    """Sync aggregated tags for a track to the local database."""
+    artist_tags = artist_meta.get("genres", []) + artist_meta.get("styles", [])
+    album_tags = album_meta.get("genres", []) + album_meta.get("styles", []) + album_meta.get("moods", [])
+    track_moods = [m.tag.strip().title() for m in getattr(track, "moods", []) if m.tag and m.tag.strip()]
+
+    merged_tags = set(artist_tags + album_tags + track_moods)
+
+    expanded = expand_tags(list(merged_tags))
+
+    upsert_tags(conn, str(track.ratingKey), 'track', expanded['specific'], 'genre')
+    upsert_tags(conn, str(track.ratingKey), 'track', expanded['parents'], 'parent_genre')
+
+    if album_meta.get('rating_key'):
+        upsert_tags(conn, str(album_meta['rating_key']), 'album', album_tags, 'genre')
+
+    if artist_meta.get('rating_key'):
+        upsert_tags(conn, str(artist_meta['rating_key']), 'artist', artist_tags, 'genre')
+
+    return bool(merged_tags)
+
+
 class PlexClient:
     """Client for interacting with Plex server."""
 
@@ -305,15 +344,37 @@ class PlexClient:
             return {}
 
         try:
+            logger.info("Fetching all artists for metadata mapping...")
+            artists = self._library.search(libtype="artist")
+            artist_dict = {str(a.ratingKey): a for a in artists}
+
             logger.info("Fetching all albums for metadata mapping...")
             albums = self._library.search(libtype="album")
-            album_metadata = {
-                str(album.ratingKey): {
-                    "genres": [g.tag for g in album.genres],
+
+            album_metadata = {}
+            for album in albums:
+                artist_obj = artist_dict.get(str(getattr(album, "parentRatingKey", "")))
+                if not artist_obj:
+                    try:
+                        artist_obj = album.artist()
+                    except Exception:
+                        artist_obj = None
+
+                artist_meta = get_artist_metadata(artist_obj)
+
+                album_genres = [g.tag.strip().title() for g in getattr(album, "genres", []) if g.tag and g.tag.strip()]
+                album_styles = [s.tag.strip().title() for s in getattr(album, "styles", []) if s.tag and s.tag.strip()]
+                album_moods = [m.tag.strip().title() for m in getattr(album, "moods", []) if m.tag and m.tag.strip()]
+
+                album_metadata[str(album.ratingKey)] = {
+                    "rating_key": str(album.ratingKey),
+                    "genres": album_genres,
+                    "styles": album_styles,
+                    "moods": album_moods,
                     "year": getattr(album, "year", None),
+                    "artist_meta": artist_meta
                 }
-                for album in albums
-            }
+
             logger.info("Got metadata for %d albums", len(album_metadata))
             return album_metadata
         except Exception as e:

@@ -172,9 +172,106 @@ def init_schema(conn: sqlite3.Connection) -> bool:
     # Index on parent_rating_key (must come after migration adds the column)
     conn.execute("CREATE INDEX IF NOT EXISTS idx_tracks_parent_key ON tracks(parent_rating_key)")
 
+    migrate_schema(conn)
+
     conn.commit()
     return migrated
 
+
+def migrate_schema(conn: sqlite3.Connection) -> None:
+    conn.executescript("""
+        CREATE TABLE IF NOT EXISTS tags (
+            id INTEGER PRIMARY KEY,
+            name TEXT UNIQUE COLLATE NOCASE
+        );
+
+        CREATE TABLE IF NOT EXISTS track_tags (
+            track_id TEXT,
+            tag_id INTEGER,
+            tag_type TEXT,
+            PRIMARY KEY (track_id, tag_id, tag_type),
+            FOREIGN KEY (track_id) REFERENCES tracks(rating_key),
+            FOREIGN KEY (tag_id) REFERENCES tags(id)
+        );
+
+        CREATE TABLE IF NOT EXISTS album_tags (
+            album_id TEXT,
+            tag_id INTEGER,
+            tag_type TEXT,
+            PRIMARY KEY (album_id, tag_id, tag_type)
+        );
+
+        CREATE TABLE IF NOT EXISTS artist_tags (
+            artist_id TEXT,
+            tag_id INTEGER,
+            tag_type TEXT,
+            PRIMARY KEY (artist_id, tag_id, tag_type)
+        );
+    """)
+    conn.commit()
+
+
+def upsert_tags(conn: sqlite3.Connection, entity_id: str, entity_type: str, tags: list[str], tag_type: str) -> None:
+    if not tags:
+        return
+
+    unique_tags = {str(t).strip().title() for t in tags if str(t).strip()}
+    if not unique_tags:
+        return
+
+    conn.executemany(
+        "INSERT OR IGNORE INTO tags (name) VALUES (?)",
+        [(t,) for t in unique_tags]
+    )
+
+    placeholders = ",".join("?" for _ in unique_tags)
+    rows = conn.execute(
+        f"SELECT id, name FROM tags WHERE name IN ({placeholders})",
+        list(unique_tags)
+    ).fetchall()
+
+    tag_map = {row["name"].lower(): row["id"] for row in rows}
+
+    junction_data = []
+    for tag in unique_tags:
+        tag_id = tag_map.get(tag.lower())
+        if tag_id is not None:
+            junction_data.append((entity_id, tag_id, tag_type))
+
+    if not junction_data:
+        return
+
+    if entity_type == "track":
+        query = "INSERT OR IGNORE INTO track_tags (track_id, tag_id, tag_type) VALUES (?, ?, ?)"
+    elif entity_type == "album":
+        query = "INSERT OR IGNORE INTO album_tags (album_id, tag_id, tag_type) VALUES (?, ?, ?)"
+    elif entity_type == "artist":
+        query = "INSERT OR IGNORE INTO artist_tags (artist_id, tag_id, tag_type) VALUES (?, ?, ?)"
+    else:
+        raise ValueError(f"Unknown entity_type: {entity_type}")
+
+    conn.executemany(query, junction_data)
+    conn.commit()
+
+
+def get_tags(conn: sqlite3.Connection, entity_id: str, entity_type: str, tag_type: str = None) -> list[str]:
+    params = [entity_id]
+
+    if entity_type == "track":
+        query = "SELECT t.name FROM tags t JOIN track_tags jt ON t.id = jt.tag_id WHERE jt.track_id = ?"
+    elif entity_type == "album":
+        query = "SELECT t.name FROM tags t JOIN album_tags jt ON t.id = jt.tag_id WHERE jt.album_id = ?"
+    elif entity_type == "artist":
+        query = "SELECT t.name FROM tags t JOIN artist_tags jt ON t.id = jt.tag_id WHERE jt.artist_id = ?"
+    else:
+        raise ValueError(f"Unknown entity_type: {entity_type}")
+
+    if tag_type:
+        query += " AND jt.tag_type = ?"
+        params.append(tag_type)
+
+    rows = conn.execute(query, params).fetchall()
+    return [row["name"] for row in rows]
 
 # Whether a migration was applied on startup (signals need for re-sync)
 _migration_applied = False
