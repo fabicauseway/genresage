@@ -17,6 +17,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
+from backend.plex_client import sync_tags_for_track
+
 logger = logging.getLogger(__name__)
 
 # Database location
@@ -601,7 +603,7 @@ def sync_library(
             last_viewed_at = last_viewed_at_raw.isoformat() if last_viewed_at_raw else None
 
             # Sync tags via relational pipeline
-            has_tags = plex_client.sync_tags_for_track(conn, track, album_data, artist_data)
+            has_tags = sync_tags_for_track(conn, track, album_data, artist_data)
 
             batch_data.append((
                 str(track.ratingKey),
