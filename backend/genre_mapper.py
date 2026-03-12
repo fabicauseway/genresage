@@ -175,6 +175,16 @@ GENRE_HIERARCHY = {
     "Dark Ambient": ["Experimental", "Electronic", "Ambient"]
 }
 
+MOOD_HIERARCHY = {
+    "Energy": ["Energetic", "Intense", "Rousing", "Lively", "Urgent", "Aggressive", "Fiery", "Visceral", "Volatile", "Rebellious", "Boisterous", "Exuberant", "Exciting", "Pulsing", "Brash", "Swaggering", "Strong", "Rollicking", "Confident"],
+    "Dark": ["Nocturnal", "Eerie", "Ominous", "Brooding", "Menacing", "Gloomy", "Somber", "Bleak", "Paranoid", "Tense/Anxious", "Wintry", "Cold", "Austere", "Uncompromising"],
+    "Atmospheric": ["Hypnotic", "Trippy", "Dreamy", "Atmospheric", "Ethereal", "Spacey", "Druggy", "Lush", "Flowing", "Meandering", "Sprawling"],
+    "Emotional": ["Melancholy", "Yearning", "Passionate", "Wistful", "Bittersweet", "Poignant", "Sentimental", "Plaintive", "Romantic", "Intimate", "Sensual", "Cathartic", "Searching", "Earnest", "Sexy"],
+    "Uplifting": ["Happy", "Joyous", "Celebratory", "Carefree", "Fun", "Playful", "Whimsical", "Quirky", "Bright", "Sweet", "Summery", "Cheerful", "Sparkling", "Light", "Warm", "Gentle", "Amiable/Good-Natured"],
+    "Cool": ["Stylish", "Sophisticated", "Elegant", "Refined", "Slick", "Smooth", "Detached", "Clinical", "Cerebral", "Complex", "Literate", "Witty", "Enigmatic", "Eccentric", "Ambitious", "Theatrical", "Provocative", "Earthy"],
+    "Chill": ["Laid-Back/Mellow", "Relaxed", "Calm/Peaceful", "Soothing", "Soft/Quiet", "Delicate", "Reserved", "Reflective", "Restrained", "Dramatic", "Freewheeling"],
+}
+
 def get_parent_genres(tags: list[str]) -> set[str]:
     parents = set()
     for tag in tags:

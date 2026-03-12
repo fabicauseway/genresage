@@ -143,6 +143,13 @@ class GenreCount(BaseModel):
     count: int | None = None
 
 
+class MoodCount(BaseModel):
+    """Mood with track count."""
+
+    name: str
+    count: int | None = None
+
+
 class DecadeCount(BaseModel):
     """Decade with track count."""
 
@@ -156,6 +163,7 @@ class LibraryStatsResponse(BaseModel):
     total_tracks: int
     genres: list[GenreCount]
     decades: list[DecadeCount]
+    moods: list[MoodCount] = []
 
 
 class AnalyzePromptRequest(BaseModel):

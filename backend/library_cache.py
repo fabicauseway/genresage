@@ -376,6 +376,7 @@ def get_cached_tracks() -> list[dict[str, Any]]:
 def get_tracks_by_filters(
     genres: list[str] | None = None,
     decades: list[str] | None = None,
+    moods: list[str] | None = None,
     min_rating: int = 0,
     exclude_live: bool = True,
     limit: int = 0,
@@ -431,6 +432,17 @@ def get_tracks_by_filters(
             )
             where_clause += f" AND tg.name IN ({placeholders}) AND tt.tag_type IN ('genre', 'parent_genre')"
             
+        if moods:
+            mood_placeholders = ",".join("?" for _ in moods)
+            params = params + [m.strip().title() for m in moods]
+            where_clause += (
+                f" AND tracks.rating_key IN ("
+                f"SELECT tt.track_id FROM track_tags tt "
+                f"JOIN tags tg ON tt.tag_id = tg.id "
+                f"WHERE tg.name IN ({mood_placeholders}) "
+                f"AND tt.tag_type = 'mood')"
+            )
+
         query = f"SELECT DISTINCT tracks.* FROM tracks {join_clause} WHERE {where_clause}"
 
         if limit > 0:
@@ -722,6 +734,7 @@ def get_sync_progress() -> dict[str, Any]:
 def count_tracks_by_filters(
     genres: list[str] | None = None,
     decades: list[str] | None = None,
+    moods: list[str] | None = None,
     min_rating: int = 0,
     exclude_live: bool = True,
 ) -> int:
@@ -776,6 +789,17 @@ def count_tracks_by_filters(
                 "JOIN tags tg ON tt.tag_id = tg.id"
             )
             where_clause += f" AND tg.name IN ({placeholders}) AND tt.tag_type IN ('genre', 'parent_genre')"
+
+        if moods:
+            mood_placeholders = ",".join("?" for _ in moods)
+            params = params + [m.strip().title() for m in moods]
+            where_clause += (
+                f" AND tracks.rating_key IN ("
+                f"SELECT tt.track_id FROM track_tags tt "
+                f"JOIN tags tg ON tt.tag_id = tg.id "
+                f"WHERE tg.name IN ({mood_placeholders}) "
+                f"AND tt.tag_type = 'mood')"
+            )
 
         query = f"SELECT COUNT(DISTINCT tracks.rating_key) FROM tracks {join_clause} WHERE {where_clause}"
         count = conn.execute(query, params).fetchone()[0]
@@ -946,7 +970,17 @@ def get_cached_genre_decade_stats() -> dict[str, list[dict[str, Any]]]:
 
         genres = [{"name": row["name"], "count": row["count"]} for row in genre_rows]
 
-        return {"genres": genres, "decades": decades}
+        mood_rows = conn.execute("""
+            SELECT t.name, COUNT(DISTINCT tt.track_id) as count
+            FROM tags t
+            JOIN track_tags tt ON t.id = tt.tag_id
+            WHERE tt.tag_type = 'mood'
+            GROUP BY t.name
+            ORDER BY count DESC
+        """).fetchall()
+        moods = [{"name": row["name"], "count": row["count"]} for row in mood_rows]
+
+        return {"genres": genres, "decades": decades, "moods": moods}
     finally:
         conn.close()
 

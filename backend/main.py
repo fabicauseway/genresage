@@ -40,6 +40,7 @@ from backend.models import (
     OllamaModelInfo,
     OllamaModelsResponse,
     OllamaStatus,
+    MoodCount,
     PlexClientInfo,
     PlexPlaylistInfo,
     PlayQueueRequest,
@@ -583,6 +584,7 @@ async def get_library_stats_cached() -> LibraryStatsResponse:
         total_tracks=0,  # Not needed for filter chips
         genres=[GenreCount(**g) for g in stats["genres"]],
         decades=[DecadeCount(**d) for d in stats["decades"]],
+        moods=[MoodCount(**m) for m in stats.get("moods", [])],
     )
 
 
@@ -595,6 +597,13 @@ async def get_genres_hierarchy() -> dict[str, list[str]]:
         for parent in parents:
             inverted.setdefault(parent, []).append(subgenre)
     return inverted
+
+
+@app.get("/api/library/moods/hierarchy")
+async def get_moods_hierarchy() -> dict[str, list[str]]:
+    """Return mood category -> [moods] hierarchy for UI chip expansion."""
+    from backend.genre_mapper import MOOD_HIERARCHY
+    return MOOD_HIERARCHY
 
 
 @app.get("/api/library/search", response_model=list[Track])
