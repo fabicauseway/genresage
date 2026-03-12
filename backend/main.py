@@ -586,6 +586,13 @@ async def get_library_stats_cached() -> LibraryStatsResponse:
     )
 
 
+@app.get("/api/library/genres/hierarchy")
+async def get_genres_hierarchy() -> dict[str, list[str]]:
+    """Return the genre hierarchy for subgenre chip expansion in the UI."""
+    from backend.genre_mapper import GENRE_HIERARCHY
+    return GENRE_HIERARCHY
+
+
 @app.get("/api/library/search", response_model=list[Track])
 async def search_library(q: str = Query(..., description="Search query")) -> list[Track]:
     """Search for tracks in the library."""

@@ -187,3 +187,6 @@ def get_all_parent_categories() -> list[str]:
     for p_list in GENRE_HIERARCHY.values():
         parents.update(p_list)
     return sorted(list(parents))
+
+def get_genre_hierarchy() -> dict[str, list[str]]:
+    return GENRE_HIERARCHY
