@@ -556,6 +556,10 @@ def sync_library(
 
         # Clear existing tracks and reset sync state to avoid stale "cache available"
         # signal if sync fails partway through
+        conn.execute("DELETE FROM track_tags")
+        conn.execute("DELETE FROM album_tags")
+        conn.execute("DELETE FROM artist_tags")
+        conn.execute("DELETE FROM tags")
         conn.execute("DELETE FROM tracks")
         conn.execute("UPDATE sync_state SET track_count = 0 WHERE id = 1")
         conn.commit()
