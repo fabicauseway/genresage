@@ -101,6 +101,12 @@ const state = {
     genreHierarchy: {},       // { "Rock": ["Post-Punk", "Shoegaze"], ... }
     expandedGenres: new Set(), // Parent genre names currently expanded (playlist flow)
 
+    // Mood filter state (playlist flow)
+    availableMoods: [],         // {name, count}[] filtered to count >= 300
+    moodHierarchy: {},          // { "Energy": ["Energetic", "Intense", ...], ... }
+    selectedMoods: [],          // mood names currently selected
+    expandedMoods: new Set(),   // mood category names currently expanded
+
     // Results
     playlist: [],
     playlistName: '',
@@ -160,6 +166,8 @@ const state = {
         loading: false,
         filterAnalysisPromise: null,
         expandedGenres: new Set(), // Parent genre names currently expanded (rec flow)
+        selectedMoods: [],          // mood names currently selected (rec flow)
+        expandedMoods: new Set(),   // mood category names currently expanded (rec flow)
     },
 
     // Setup wizard
@@ -206,6 +214,31 @@ function toggleGenreExpanded(genreName, expandedSet) {
         expandedSet.delete(genreName);
     } else {
         expandedSet.add(genreName);
+    }
+}
+
+// Returns the list of individual moods for a given mood category name.
+// Returns [] if the category has no children or hierarchy is not loaded.
+function getMoodChildrenOf(categoryName) {
+    return (state.moodHierarchy || {})[categoryName] || [];
+}
+
+// Returns the mood category name for a given individual mood, or null if uncategorised.
+function getMoodParentOf(moodName) {
+    const hier = state.moodHierarchy || {};
+    for (const [category, moods] of Object.entries(hier)) {
+        if (moods.includes(moodName)) return category;
+    }
+    return null;
+}
+
+// Toggles the expanded state of a mood category in the given expandedSet (a Set).
+// Pass state.expandedMoods for the playlist flow, state.rec.expandedMoods for the rec flow.
+function toggleMoodExpanded(categoryName, expandedSet) {
+    if (expandedSet.has(categoryName)) {
+        expandedSet.delete(categoryName);
+    } else {
+        expandedSet.add(categoryName);
     }
 }
 
@@ -285,6 +318,16 @@ async function loadGenreHierarchy() {
         // Hierarchy endpoint not yet available or failed — subgenre expansion silently disabled
         console.warn('[MediaSage] Genre hierarchy unavailable, subgenre expansion disabled:', e);
         state.genreHierarchy = {};
+    }
+}
+
+async function loadMoodHierarchy() {
+    try {
+        state.moodHierarchy = await apiCall('/library/moods/hierarchy');
+    } catch (e) {
+        // Hierarchy endpoint not yet available or failed — mood expansion silently disabled
+        console.warn('[MediaSage] Mood hierarchy unavailable, mood expansion disabled:', e);
+        state.moodHierarchy = {};
     }
 }
 
@@ -1164,6 +1207,7 @@ function updateFilters() {
     const focused = document.activeElement;
     const focusedGenre = focused?.dataset?.genre;
     const focusedDecade = focused?.dataset?.decade;
+    const focusedMood = focused?.dataset?.mood;
 
     // Update genre chips
     const genreContainer = document.getElementById('genre-chips');
@@ -1238,11 +1282,67 @@ function updateFilters() {
             allSelected ? 'Deselect all decades' : 'Select all decades');
     }
 
+    // Update mood chips
+    const moodContainer = document.getElementById('mood-chips');
+    if (moodContainer) {
+        const visibleMoods = state.availableMoods;
+        if (visibleMoods.length === 0) {
+            // Hide the whole mood section if there are no qualifying moods
+            moodContainer.closest('.filter-section')?.classList.add('hidden');
+        } else {
+            moodContainer.closest('.filter-section')?.classList.remove('hidden');
+            moodContainer.innerHTML = visibleMoods.map(mood => {
+                const isSelected = state.selectedMoods.includes(mood.name);
+                const children = getMoodChildrenOf(mood.name);
+                const hasChildren = children.length > 0;
+                const isExpanded = state.expandedMoods.has(mood.name);
+
+                const parentChipHtml = `<button class="chip ${isSelected ? 'selected' : ''}"
+                        data-mood="${escapeHtml(mood.name)}"
+                        aria-pressed="${isSelected}">
+                    ${escapeHtml(mood.name)}
+                    ${mood.count != null ? `<span class="chip-count">${mood.count}</span>` : ''}
+                </button>`;
+
+                if (!hasChildren) return parentChipHtml;
+
+                const arrowHtml = `<button class="chip-expand-arrow ${isExpanded ? 'chip-expand-arrow--open' : ''}"
+                        data-expand-mood="${escapeHtml(mood.name)}"
+                        aria-label="${isExpanded ? 'Collapse' : 'Expand'} moods for ${escapeHtml(mood.name)}"
+                        aria-expanded="${isExpanded}"
+                        tabindex="0">&#9662;</button>`;
+
+                const subrowHtml = isExpanded ? `
+                <div class="chip-subrow">
+                    ${children
+                        .filter(sub => state.availableMoods.some(m => m.name === sub))
+                        .map(sub => {
+                            const subSelected = state.selectedMoods.includes(sub);
+                            return `<button class="chip chip--sub ${subSelected ? 'selected' : ''}"
+                                    data-mood="${escapeHtml(sub)}"
+                                    data-parent-mood="${escapeHtml(mood.name)}"
+                                    aria-pressed="${subSelected}">
+                                ${escapeHtml(sub)}
+                            </button>`;
+                        }).join('')}
+                </div>` : '';
+
+                return `<div class="chip-group">
+                    <div class="chip-parent-row">${parentChipHtml}${arrowHtml}</div>
+                    ${subrowHtml}
+                </div>`;
+            }).join('');
+        }
+    }
+
     // Restore focus to the chip that was active before re-render
     if (focusedGenre) {
         genreContainer.querySelector(`[data-genre="${CSS.escape(focusedGenre)}"]`)?.focus();
     } else if (focusedDecade) {
         decadeContainer.querySelector(`[data-decade="${CSS.escape(focusedDecade)}"]`)?.focus();
+    } else if (focusedMood) {
+        document.getElementById('mood-chips')
+            ?.querySelector(`[data-mood="${CSS.escape(focusedMood)}"]`)?.focus();
     }
 
     // Update track count buttons
@@ -1445,6 +1545,7 @@ async function updateFilterPreview() {
         const requestBody = {
             genres: allGenresSelected() ? [] : state.selectedGenres,
             decades: allDecadesSelected() ? [] : state.selectedDecades,
+            moods: state.selectedMoods,
             track_count: state.trackCount,
             max_tracks_to_ai: state.maxTracksToAI,
             min_rating: state.minRating,
@@ -2264,6 +2365,7 @@ function resetPlaylistState() {
     state.additionalNotes = '';
     state.selectedGenres = [];
     state.selectedDecades = [];
+    state.selectedMoods = [];
     state.playlist = [];
     state.playlistName = '';
     state.tokenCount = 0;
@@ -2734,6 +2836,50 @@ function setupEventListeners() {
         updateFilterPreview();
     });
 
+    // Mood chips — event delegation for both category (parent) and individual (child) chips
+    const moodChips = document.getElementById('mood-chips');
+    if (moodChips) {
+        moodChips.addEventListener('click', e => {
+            // Arrow expand/collapse toggle — check before .chip to avoid capture conflict
+            const arrow = e.target.closest('.chip-expand-arrow');
+            if (arrow) {
+                toggleMoodExpanded(arrow.dataset.expandMood, state.expandedMoods);
+                updateFilters();
+                return; // Expand/collapse doesn't change selection — no preview update needed
+            }
+
+            const chip = e.target.closest('.chip');
+            if (!chip) return;
+
+            const mood = chip.dataset.mood;
+            if (!mood) return;
+            const parentMood = chip.dataset.parentMood; // Only present on child mood chips
+
+            if (parentMood) {
+                // Child mood selected: remove its category parent from selection if present
+                state.selectedMoods = state.selectedMoods.filter(m => m !== parentMood);
+                // Toggle self
+                if (state.selectedMoods.includes(mood)) {
+                    state.selectedMoods = state.selectedMoods.filter(m => m !== mood);
+                } else {
+                    state.selectedMoods.push(mood);
+                }
+            } else {
+                // Category chip selected: remove all its children from selection
+                const children = getMoodChildrenOf(mood);
+                state.selectedMoods = state.selectedMoods.filter(m => !children.includes(m));
+                // Toggle self
+                if (state.selectedMoods.includes(mood)) {
+                    state.selectedMoods = state.selectedMoods.filter(m => m !== mood);
+                } else {
+                    state.selectedMoods.push(mood);
+                }
+            }
+            updateFilters();
+            updateFilterPreview();
+        });
+    }
+
     // Track count (local recalculation - no API call needed)
     document.querySelectorAll('.count-btn').forEach(btn => {
         btn.addEventListener('click', () => {
@@ -3156,6 +3302,7 @@ async function handleGenerate() {
     const request = {
         genres: allGenresSelected() ? [] : state.selectedGenres,
         decades: allDecadesSelected() ? [] : state.selectedDecades,
+        moods: state.selectedMoods,
         track_count: state.trackCount,
         exclude_live: state.excludeLive,
         min_rating: state.minRating,
@@ -3325,8 +3472,11 @@ async function loadSettings() {
                 // Cache genre/decade data so other views don't need a separate fetch
                 state.availableGenres = stats.genres;
                 state.availableDecades = stats.decades;
-                // Load genre hierarchy for subgenre expansion (non-blocking — failure is acceptable)
+                // Filter moods to count >= 300 before caching
+                state.availableMoods = (stats.moods || []).filter(m => m.count >= 300);
+                // Load hierarchies non-blocking — failure in either is acceptable
                 loadGenreHierarchy();
+                loadMoodHierarchy();
                 document.getElementById('library-stats').innerHTML = `
                     <p><strong>Total Tracks:</strong> ${stats.total_tracks.toLocaleString()}</p>
                     <p><strong>Genres:</strong> ${stats.genres.length}</p>
@@ -4061,14 +4211,20 @@ async function loadRecommendFilters() {
             const stats = await apiCall('/library/stats');
             state.availableGenres = stats.genres.map(g => ({ name: g.name, count: g.count }));
             state.availableDecades = stats.decades.map(d => ({ name: d.name, count: d.count }));
+            state.availableMoods = (stats.moods || [])
+                .map(m => ({ name: m.name, count: m.count }))
+                .filter(m => m.count >= 300);
         } catch (e) {
             console.error('Failed to load recommend filters:', e);
             return;
         }
     }
-    // Ensure hierarchy is loaded (may already be set by loadSettings; fetch only if missing)
+    // Ensure hierarchies are loaded (may already be set by loadSettings; fetch only if missing)
     if (!Object.keys(state.genreHierarchy).length) {
         await loadGenreHierarchy();
+    }
+    if (!Object.keys(state.moodHierarchy).length) {
+        await loadMoodHierarchy();
     }
     // No chips selected = no filter (all albums included)
     renderRecFilterChips();
@@ -4128,6 +4284,57 @@ function renderRecFilterChips() {
             ${escapeHtml(decade.name)}
         </button>`;
     }).join('');
+
+    // Update mood chips (rec flow)
+    const moodContainer = document.getElementById('rec-mood-chips');
+    if (moodContainer) {
+        const visibleMoods = state.availableMoods;
+        if (visibleMoods.length === 0) {
+            moodContainer.closest('.filter-section')?.classList.add('hidden');
+        } else {
+            moodContainer.closest('.filter-section')?.classList.remove('hidden');
+            moodContainer.innerHTML = visibleMoods.map(mood => {
+                const isSelected = state.rec.selectedMoods.includes(mood.name);
+                const children = getMoodChildrenOf(mood.name);
+                const hasChildren = children.length > 0;
+                const isExpanded = state.rec.expandedMoods.has(mood.name);
+
+                const parentChipHtml = `<button class="chip ${isSelected ? 'selected' : ''}"
+                        data-mood="${escapeHtml(mood.name)}"
+                        aria-pressed="${isSelected}">
+                    ${escapeHtml(mood.name)}
+                </button>`;
+
+                if (!hasChildren) return parentChipHtml;
+
+                const arrowHtml = `<button class="chip-expand-arrow ${isExpanded ? 'chip-expand-arrow--open' : ''}"
+                        data-expand-mood="${escapeHtml(mood.name)}"
+                        aria-label="${isExpanded ? 'Collapse' : 'Expand'} moods for ${escapeHtml(mood.name)}"
+                        aria-expanded="${isExpanded}"
+                        tabindex="0">&#9662;</button>`;
+
+                const subrowHtml = isExpanded ? `
+                <div class="chip-subrow">
+                    ${children
+                        .filter(sub => state.availableMoods.some(m => m.name === sub))
+                        .map(sub => {
+                            const subSelected = state.rec.selectedMoods.includes(sub);
+                            return `<button class="chip chip--sub ${subSelected ? 'selected' : ''}"
+                                    data-mood="${escapeHtml(sub)}"
+                                    data-parent-mood="${escapeHtml(mood.name)}"
+                                    aria-pressed="${subSelected}">
+                                ${escapeHtml(sub)}
+                            </button>`;
+                        }).join('')}
+                </div>` : '';
+
+                return `<div class="chip-group">
+                    <div class="chip-parent-row">${parentChipHtml}${arrowHtml}</div>
+                    ${subrowHtml}
+                </div>`;
+            }).join('');
+        }
+    }
 
     // Sync toggle labels
     const genreToggle = document.getElementById('rec-genre-toggle-all');
@@ -4264,6 +4471,9 @@ async function updateRecAlbumPreview() {
         }
         if (!allDecades && state.rec.selectedDecades.length) {
             params.set('decades', state.rec.selectedDecades.join(','));
+        }
+        if (state.rec.selectedMoods.length) {
+            params.set('moods', state.rec.selectedMoods.join(','));
         }
         params.set('max_albums', state.rec.maxAlbumsToAI);
 
@@ -4554,6 +4764,7 @@ async function handleRecGenerate() {
                 mode: state.rec.mode,
                 genres: (state.availableGenres.length > 0 && state.rec.selectedGenres.length === state.availableGenres.length) ? [] : state.rec.selectedGenres,
                 decades: (state.availableDecades.length > 0 && state.rec.selectedDecades.length === state.availableDecades.length) ? [] : state.rec.selectedDecades,
+                moods: state.rec.selectedMoods,
                 familiarity_pref: state.rec.familiarityPref,
                 max_albums: state.rec.maxAlbumsToAI,
             }),
@@ -4897,6 +5108,7 @@ function resetRecState() {
     state.rec.loading = false;
     state.rec.selectedGenres = [];
     state.rec.selectedDecades = [];
+    state.rec.selectedMoods = [];
     state.rec.questions = [];
     state.rec.answers = [];
     state.rec.answerTexts = [];
@@ -5051,6 +5263,49 @@ function setupRecEventListeners() {
                 state.rec.selectedDecades = state.rec.selectedDecades.filter(d => d !== decade);
             } else {
                 state.rec.selectedDecades.push(decade);
+            }
+            renderRecFilterChips();
+            updateRecAlbumPreview();
+        });
+    }
+
+    const recMoodChips = document.getElementById('rec-mood-chips');
+    if (recMoodChips) {
+        recMoodChips.addEventListener('click', e => {
+            // Arrow expand/collapse toggle
+            const arrow = e.target.closest('.chip-expand-arrow');
+            if (arrow) {
+                toggleMoodExpanded(arrow.dataset.expandMood, state.rec.expandedMoods);
+                renderRecFilterChips();
+                return; // No album preview change needed
+            }
+
+            const chip = e.target.closest('.chip');
+            if (!chip) return;
+
+            const mood = chip.dataset.mood;
+            if (!mood) return;
+            const parentMood = chip.dataset.parentMood;
+
+            if (parentMood) {
+                // Child mood selected: remove category parent from selection if present
+                state.rec.selectedMoods = state.rec.selectedMoods.filter(m => m !== parentMood);
+                // Toggle self
+                if (state.rec.selectedMoods.includes(mood)) {
+                    state.rec.selectedMoods = state.rec.selectedMoods.filter(m => m !== mood);
+                } else {
+                    state.rec.selectedMoods.push(mood);
+                }
+            } else {
+                // Category chip selected: remove all its children from selection
+                const children = getMoodChildrenOf(mood);
+                state.rec.selectedMoods = state.rec.selectedMoods.filter(m => !children.includes(m));
+                // Toggle self
+                if (state.rec.selectedMoods.includes(mood)) {
+                    state.rec.selectedMoods = state.rec.selectedMoods.filter(m => m !== mood);
+                } else {
+                    state.rec.selectedMoods.push(mood);
+                }
             }
             renderRecFilterChips();
             updateRecAlbumPreview();
