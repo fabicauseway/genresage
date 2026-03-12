@@ -182,10 +182,11 @@ def get_artist_metadata(artist: Any) -> dict[str, Any]:
 def sync_tags_for_track(conn: Any, track: Any, album_meta: dict[str, Any], artist_meta: dict[str, Any]) -> bool:
     """Sync aggregated tags for a track to the local database."""
     artist_tags = artist_meta.get("genres", []) + artist_meta.get("styles", [])
-    album_tags = album_meta.get("genres", []) + album_meta.get("styles", []) + album_meta.get("moods", [])
+    album_genre_tags = album_meta.get("genres", []) + album_meta.get("styles", [])
+    album_mood_tags = album_meta.get("moods", [])
     track_moods = [m.tag.strip().title() for m in getattr(track, "moods", []) if m.tag and m.tag.strip()]
-
-    merged_tags = set(artist_tags + album_tags + track_moods)
+    all_moods = list(set(album_mood_tags + track_moods))
+    merged_tags = set(artist_tags + album_genre_tags)
 
     expanded = expand_tags(list(merged_tags))
 
@@ -193,8 +194,11 @@ def sync_tags_for_track(conn: Any, track: Any, album_meta: dict[str, Any], artis
     upsert_tags(conn, str(track.ratingKey), 'track', expanded['specific'], 'genre')
     upsert_tags(conn, str(track.ratingKey), 'track', expanded['parents'], 'parent_genre')
 
+    if all_moods:
+        upsert_tags(conn, str(track.ratingKey), 'track', all_moods, 'mood')
+
     if album_meta.get('rating_key'):
-        album_expanded = expand_tags(album_tags)
+        album_expanded = expand_tags(album_genre_tags)
         upsert_tags(conn, str(album_meta['rating_key']), 'album', album_expanded['specific'], 'genre')
         upsert_tags(conn, str(album_meta['rating_key']), 'album', album_expanded['parents'], 'parent_genre')
 
