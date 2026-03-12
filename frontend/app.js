@@ -97,6 +97,10 @@ const state = {
     maxTracksToAI: 500,  // 0 = no limit
     minRating: 0,  // 0 = any, 2/4/6/8 = 1/2/3/4 stars minimum
 
+    // Genre hierarchy for subgenre chip expansion
+    genreHierarchy: {},       // { "Rock": ["Post-Punk", "Shoegaze"], ... }
+    expandedGenres: new Set(), // Parent genre names currently expanded (playlist flow)
+
     // Results
     playlist: [],
     playlistName: '',
@@ -155,6 +159,7 @@ const state = {
         maxAlbumsToAI: 2500,
         loading: false,
         filterAnalysisPromise: null,
+        expandedGenres: new Set(), // Parent genre names currently expanded (rec flow)
     },
 
     // Setup wizard
@@ -177,6 +182,31 @@ function allGenresSelected() {
 function allDecadesSelected() {
     return state.availableDecades.length > 0 &&
         state.selectedDecades.length === state.availableDecades.length;
+}
+
+// Returns the list of subgenres for a given parent genre name.
+// Returns [] if the parent has no children or hierarchy is not loaded.
+function getChildrenOf(parentName) {
+    return (state.genreHierarchy || {})[parentName] || [];
+}
+
+// Returns the parent genre name for a given subgenre, or null if not a subgenre.
+function getParentOf(childName) {
+    const hier = state.genreHierarchy || {};
+    for (const [parent, children] of Object.entries(hier)) {
+        if (children.includes(childName)) return parent;
+    }
+    return null;
+}
+
+// Toggles the expanded state of a parent genre in the given expandedSet (a Set).
+// Pass state.expandedGenres for the playlist flow, state.rec.expandedGenres for the rec flow.
+function toggleGenreExpanded(genreName, expandedSet) {
+    if (expandedSet.has(genreName)) {
+        expandedSet.delete(genreName);
+    } else {
+        expandedSet.add(genreName);
+    }
 }
 
 // =============================================================================
@@ -246,6 +276,16 @@ async function updateConfig(updates) {
         method: 'POST',
         body: JSON.stringify(updates),
     });
+}
+
+async function loadGenreHierarchy() {
+    try {
+        state.genreHierarchy = await apiCall('/library/genres/hierarchy');
+    } catch (e) {
+        // Hierarchy endpoint not yet available or failed — subgenre expansion silently disabled
+        console.warn('[MediaSage] Genre hierarchy unavailable, subgenre expansion disabled:', e);
+        state.genreHierarchy = {};
+    }
 }
 
 // =============================================================================
@@ -1129,14 +1169,43 @@ function updateFilters() {
     const genreContainer = document.getElementById('genre-chips');
     genreContainer.innerHTML = state.availableGenres.map(genre => {
         const isSelected = state.selectedGenres.includes(genre.name);
-        return `
-        <button class="chip ${isSelected ? 'selected' : ''}"
+        const children = getChildrenOf(genre.name);
+        const hasChildren = children.length > 0;
+        const isExpanded = state.expandedGenres.has(genre.name);
+
+        const parentChipHtml = `<button class="chip ${isSelected ? 'selected' : ''}"
                 data-genre="${escapeHtml(genre.name)}"
                 aria-pressed="${isSelected}">
             ${escapeHtml(genre.name)}
             ${genre.count != null ? `<span class="chip-count">${genre.count}</span>` : ''}
-        </button>
-    `}).join('');
+        </button>`;
+
+        if (!hasChildren) return parentChipHtml;
+
+        const arrowHtml = `<button class="chip-expand-arrow ${isExpanded ? 'chip-expand-arrow--open' : ''}"
+                data-expand-genre="${escapeHtml(genre.name)}"
+                aria-label="${isExpanded ? 'Collapse' : 'Expand'} subgenres for ${escapeHtml(genre.name)}"
+                aria-expanded="${isExpanded}"
+                tabindex="0">&#9662;</button>`;
+
+        const subrowHtml = isExpanded ? `
+        <div class="chip-subrow">
+            ${children.map(sub => {
+                const subSelected = state.selectedGenres.includes(sub);
+                return `<button class="chip chip--sub ${subSelected ? 'selected' : ''}"
+                        data-genre="${escapeHtml(sub)}"
+                        data-parent-genre="${escapeHtml(genre.name)}"
+                        aria-pressed="${subSelected}">
+                    ${escapeHtml(sub)}
+                </button>`;
+            }).join('')}
+        </div>` : '';
+
+        return `<div class="chip-group">
+            <div class="chip-parent-row">${parentChipHtml}${arrowHtml}</div>
+            ${subrowHtml}
+        </div>`;
+    }).join('');
 
     // Sync genre toggle label
     const genreToggle = document.getElementById('genre-toggle-all');
@@ -2605,14 +2674,39 @@ function setupEventListeners() {
 
     // Genre chips
     document.getElementById('genre-chips').addEventListener('click', e => {
+        // Arrow expand/collapse toggle — must be checked before .chip to prevent bubbling issues
+        const arrow = e.target.closest('.chip-expand-arrow');
+        if (arrow) {
+            toggleGenreExpanded(arrow.dataset.expandGenre, state.expandedGenres);
+            updateFilters();
+            return; // No filter preview change needed — selection didn't change
+        }
+
         const chip = e.target.closest('.chip');
         if (!chip) return;
 
         const genre = chip.dataset.genre;
-        if (state.selectedGenres.includes(genre)) {
-            state.selectedGenres = state.selectedGenres.filter(g => g !== genre);
+        const parentGenre = chip.dataset.parentGenre; // Only present on subgenre chips
+
+        if (parentGenre) {
+            // Subgenre selected: remove parent from selection if present
+            state.selectedGenres = state.selectedGenres.filter(g => g !== parentGenre);
+            // Toggle self
+            if (state.selectedGenres.includes(genre)) {
+                state.selectedGenres = state.selectedGenres.filter(g => g !== genre);
+            } else {
+                state.selectedGenres.push(genre);
+            }
         } else {
-            state.selectedGenres.push(genre);
+            // Parent chip selected: remove all its children from selection
+            const children = getChildrenOf(genre);
+            state.selectedGenres = state.selectedGenres.filter(g => !children.includes(g));
+            // Toggle self
+            if (state.selectedGenres.includes(genre)) {
+                state.selectedGenres = state.selectedGenres.filter(g => g !== genre);
+            } else {
+                state.selectedGenres.push(genre);
+            }
         }
         updateFilters();
         updateFilterPreview();
@@ -3231,6 +3325,8 @@ async function loadSettings() {
                 // Cache genre/decade data so other views don't need a separate fetch
                 state.availableGenres = stats.genres;
                 state.availableDecades = stats.decades;
+                // Load genre hierarchy for subgenre expansion (non-blocking — failure is acceptable)
+                loadGenreHierarchy();
                 document.getElementById('library-stats').innerHTML = `
                     <p><strong>Total Tracks:</strong> ${stats.total_tracks.toLocaleString()}</p>
                     <p><strong>Genres:</strong> ${stats.genres.length}</p>
@@ -3970,6 +4066,10 @@ async function loadRecommendFilters() {
             return;
         }
     }
+    // Ensure hierarchy is loaded (may already be set by loadSettings; fetch only if missing)
+    if (!Object.keys(state.genreHierarchy).length) {
+        await loadGenreHierarchy();
+    }
     // No chips selected = no filter (all albums included)
     renderRecFilterChips();
     updateAlbumLimitButtons();
@@ -3983,11 +4083,41 @@ function renderRecFilterChips() {
 
     genreContainer.innerHTML = state.availableGenres.map(genre => {
         const isSelected = state.rec.selectedGenres.includes(genre.name);
-        return `<button class="chip ${isSelected ? 'selected' : ''}"
+        const children = getChildrenOf(genre.name);
+        const hasChildren = children.length > 0;
+        const isExpanded = state.rec.expandedGenres.has(genre.name);
+
+        const parentChipHtml = `<button class="chip ${isSelected ? 'selected' : ''}"
                 data-genre="${escapeHtml(genre.name)}"
                 aria-pressed="${isSelected}">
             ${escapeHtml(genre.name)}
         </button>`;
+
+        if (!hasChildren) return parentChipHtml;
+
+        const arrowHtml = `<button class="chip-expand-arrow ${isExpanded ? 'chip-expand-arrow--open' : ''}"
+                data-expand-genre="${escapeHtml(genre.name)}"
+                aria-label="${isExpanded ? 'Collapse' : 'Expand'} subgenres for ${escapeHtml(genre.name)}"
+                aria-expanded="${isExpanded}"
+                tabindex="0">&#9662;</button>`;
+
+        const subrowHtml = isExpanded ? `
+        <div class="chip-subrow">
+            ${children.map(sub => {
+                const subSelected = state.rec.selectedGenres.includes(sub);
+                return `<button class="chip chip--sub ${subSelected ? 'selected' : ''}"
+                        data-genre="${escapeHtml(sub)}"
+                        data-parent-genre="${escapeHtml(genre.name)}"
+                        aria-pressed="${subSelected}">
+                    ${escapeHtml(sub)}
+                </button>`;
+            }).join('')}
+        </div>` : '';
+
+        return `<div class="chip-group">
+            <div class="chip-parent-row">${parentChipHtml}${arrowHtml}</div>
+            ${subrowHtml}
+        </div>`;
     }).join('');
 
     decadeContainer.innerHTML = state.availableDecades.map(decade => {
@@ -4872,13 +5002,39 @@ function setupRecEventListeners() {
     const recGenreChips = document.getElementById('rec-genre-chips');
     if (recGenreChips) {
         recGenreChips.addEventListener('click', e => {
+            // Arrow expand/collapse toggle
+            const arrow = e.target.closest('.chip-expand-arrow');
+            if (arrow) {
+                toggleGenreExpanded(arrow.dataset.expandGenre, state.rec.expandedGenres);
+                renderRecFilterChips();
+                return; // No album preview change needed
+            }
+
             const chip = e.target.closest('.chip');
             if (!chip) return;
+
             const genre = chip.dataset.genre;
-            if (state.rec.selectedGenres.includes(genre)) {
-                state.rec.selectedGenres = state.rec.selectedGenres.filter(g => g !== genre);
+            const parentGenre = chip.dataset.parentGenre;
+
+            if (parentGenre) {
+                // Subgenre selected: remove parent from selection if present
+                state.rec.selectedGenres = state.rec.selectedGenres.filter(g => g !== parentGenre);
+                // Toggle self
+                if (state.rec.selectedGenres.includes(genre)) {
+                    state.rec.selectedGenres = state.rec.selectedGenres.filter(g => g !== genre);
+                } else {
+                    state.rec.selectedGenres.push(genre);
+                }
             } else {
-                state.rec.selectedGenres.push(genre);
+                // Parent chip selected: remove all its children from selection
+                const children = getChildrenOf(genre);
+                state.rec.selectedGenres = state.rec.selectedGenres.filter(g => !children.includes(g));
+                // Toggle self
+                if (state.rec.selectedGenres.includes(genre)) {
+                    state.rec.selectedGenres = state.rec.selectedGenres.filter(g => g !== genre);
+                } else {
+                    state.rec.selectedGenres.push(genre);
+                }
             }
             renderRecFilterChips();
             updateRecAlbumPreview();
