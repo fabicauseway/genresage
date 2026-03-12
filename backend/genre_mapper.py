@@ -127,7 +127,7 @@ GENRE_HIERARCHY = {
     "Britpop": ["Pop", "Rock"],
     
     # World / Global
-    "Reggae": ["World", "Reggae"],
+    "Reggae": ["Reggae"],
     "Ska": ["Reggae"],
     "Dub": ["Reggae", "Electronic"],
     "Dancehall": ["Reggae", "Dance"],

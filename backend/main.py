@@ -588,9 +588,13 @@ async def get_library_stats_cached() -> LibraryStatsResponse:
 
 @app.get("/api/library/genres/hierarchy")
 async def get_genres_hierarchy() -> dict[str, list[str]]:
-    """Return the genre hierarchy for subgenre chip expansion in the UI."""
+    """Return parent -> [subgenres] hierarchy for UI chip expansion."""
     from backend.genre_mapper import GENRE_HIERARCHY
-    return GENRE_HIERARCHY
+    inverted: dict[str, list[str]] = {}
+    for subgenre, parents in GENRE_HIERARCHY.items():
+        for parent in parents:
+            inverted.setdefault(parent, []).append(subgenre)
+    return inverted
 
 
 @app.get("/api/library/search", response_model=list[Track])
