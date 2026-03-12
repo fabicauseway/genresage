@@ -573,6 +573,7 @@ async def get_library_stats() -> LibraryStatsResponse:
         total_tracks=stats.get("total_tracks", 0),
         genres=[GenreCount(**g) for g in stats.get("genres", [])],
         decades=[DecadeCount(**d) for d in stats.get("decades", [])],
+        moods=[MoodCount(**m) for m in stats.get("moods", [])],
     )
 
 
