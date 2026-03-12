@@ -159,14 +159,27 @@ def get_parent_genres(tags: list[str]) -> set[str]:
     return parents
 
 def expand_tags(tags: list[str]) -> dict[str, list[str]]:
-    specific_tags_set = set(tags)
-    parent_tags_set = get_parent_genres(tags)
+    """Expand specific tags into grouped parents.
+
+    Guarantees that all incoming tags are automatically sanitized (empty strings 
+    stripped, and mapped using `.strip().title()` normalization) prior to 
+    expansion, preventing overlap between specific tags and parent categories.
+
+    Args:
+        tags: List of raw genre strings.
+
+    Returns:
+        Dict mapped to strictly sorted lists of 'specific' tags and 'parents'.
+    """
+    normalized_tags = [t.strip().title() for t in tags if t and t.strip()]
+    specific_set = set(normalized_tags)
+    parents_set = get_parent_genres(normalized_tags)
     
-    parent_tags_set = parent_tags_set - specific_tags_set
+    parents_set = parents_set - specific_set
     
     return {
-        "specific": sorted(list(specific_tags_set)),
-        "parents": sorted(list(parent_tags_set))
+        "specific": sorted(list(specific_set)),
+        "parents": sorted(list(parents_set))
     }
 
 def get_all_parent_categories() -> list[str]:

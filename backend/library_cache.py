@@ -179,6 +179,16 @@ def init_schema(conn: sqlite3.Connection) -> bool:
 
 
 def migrate_schema(conn: sqlite3.Connection) -> None:
+    logger.info(f"SQLite Version: {sqlite3.sqlite_version}")
+    
+    try:
+        conn.execute("ALTER TABLE tracks ADD COLUMN last_fm_checked DATETIME DEFAULT NULL;")
+        logger.info("Migration applied: added last_fm_checked column")
+    except sqlite3.OperationalError:
+        pass  # Column already exists
+
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_tracks_pending_enrichment ON tracks(rating_key) WHERE last_fm_checked IS NULL;")
+
     conn.executescript("""
         CREATE TABLE IF NOT EXISTS tags (
             id INTEGER PRIMARY KEY,
@@ -207,6 +217,10 @@ def migrate_schema(conn: sqlite3.Connection) -> None:
             tag_type TEXT,
             PRIMARY KEY (artist_id, tag_id, tag_type)
         );
+        
+        CREATE INDEX IF NOT EXISTS idx_track_tags_tag_id_type ON track_tags(tag_id, tag_type);
+        CREATE INDEX IF NOT EXISTS idx_album_tags_tag_id_type ON album_tags(tag_id, tag_type);
+        CREATE INDEX IF NOT EXISTS idx_tracks_parent_rating_key ON tracks(parent_rating_key);
     """)
     conn.commit()
 
@@ -410,11 +424,20 @@ def get_tracks_by_filters(
 
         # Build query
         where_clause = " AND ".join(conditions) if conditions else "1=1"
-        query = f"SELECT * FROM tracks WHERE {where_clause}"
+        join_clause = ""
+        
+        if genres:
+            placeholders = ",".join("?" for _ in genres)
+            params = params + [g.strip().title() for g in genres]
+            join_clause = (
+                "JOIN track_tags tt ON tracks.rating_key = tt.track_id "
+                "JOIN tags tg ON tt.tag_id = tg.id"
+            )
+            where_clause += f" AND tg.name IN ({placeholders}) AND tt.tag_type IN ('genre', 'parent_genre')"
+            
+        query = f"SELECT DISTINCT tracks.* FROM tracks {join_clause} WHERE {where_clause}"
 
-        # Only apply SQL LIMIT when no genre filter (genre filtering happens in Python)
-        # If genres are specified, we need all matching tracks first, then filter, then sample
-        if limit > 0 and not genres:
+        if limit > 0:
             query += " ORDER BY RANDOM() LIMIT ?"
             params.append(limit)
 
@@ -423,23 +446,8 @@ def get_tracks_by_filters(
 
         for row in rows:
             track = dict(row)
-            # Parse genres JSON
-            if track["genres"]:
-                track["genres"] = json.loads(track["genres"])
-            else:
-                track["genres"] = []
-
-            # Genre filtering in Python (JSON field doesn't support SQL IN)
-            if genres:
-                track_genres = [g.lower() for g in track["genres"]]
-                if not any(g.lower() in track_genres for g in genres):
-                    continue
-
+            track["genres"] = []  # Hardcoded empty list per specification to drop legacy usage
             tracks.append(track)
-
-        # Apply limit after genre filtering with random sampling
-        if limit > 0 and genres and len(tracks) > limit:
-            tracks = random.sample(tracks, limit)
 
         return tracks
     finally:
@@ -584,13 +592,16 @@ def sync_library(
             # Look up genres and year from album metadata using parentRatingKey
             parent_key = str(getattr(track, "parentRatingKey", ""))
             album_data = album_metadata.get(parent_key, {})
-            genres = album_data.get("genres", [])
+            artist_data = album_data.get("artist_meta", {})
             year = album_data.get("year")
 
             # Extract play history data
             view_count = getattr(track, "viewCount", 0) or 0
             last_viewed_at_raw = getattr(track, "lastViewedAt", None)
             last_viewed_at = last_viewed_at_raw.isoformat() if last_viewed_at_raw else None
+
+            # Sync tags via relational pipeline
+            has_tags = plex_client.sync_tags_for_track(conn, track, album_data, artist_data)
 
             batch_data.append((
                 str(track.ratingKey),
@@ -599,7 +610,7 @@ def sync_library(
                 album,
                 track.duration or 0,
                 year,
-                json.dumps(genres),  # Store genres as JSON array
+                None,  # Store None in legacy genres column
                 getattr(track, "userRating", None),
                 _is_live_version(title, album),
                 parent_key,
@@ -742,26 +753,19 @@ def count_tracks_by_filters(
                 conditions.append(f"({' OR '.join(decade_conditions)})")
 
         where_clause = " AND ".join(conditions) if conditions else "1=1"
+        join_clause = ""
+        
+        if genres:
+            placeholders = ",".join("?" for _ in genres)
+            params = params + [g.strip().title() for g in genres]
+            join_clause = (
+                "JOIN track_tags tt ON tracks.rating_key = tt.track_id "
+                "JOIN tags tg ON tt.tag_id = tg.id"
+            )
+            where_clause += f" AND tg.name IN ({placeholders}) AND tt.tag_type IN ('genre', 'parent_genre')"
 
-        # No genre filter - use simple count query
-        if not genres:
-            query = f"SELECT COUNT(*) FROM tracks WHERE {where_clause}"
-            count = conn.execute(query, params).fetchone()[0]
-            return count
-
-        # Genre filter - need to check JSON field, so fetch and filter in Python
-        query = f"SELECT genres FROM tracks WHERE {where_clause}"
-        rows = conn.execute(query, params).fetchall()
-
-        count = 0
-        genres_lower = [g.lower() for g in genres]
-        for row in rows:
-            if row["genres"]:
-                track_genres = json.loads(row["genres"])
-                track_genres_lower = [g.lower() for g in track_genres]
-                if any(g in track_genres_lower for g in genres_lower):
-                    count += 1
-
+        query = f"SELECT COUNT(DISTINCT tracks.rating_key) FROM tracks {join_clause} WHERE {where_clause}"
+        count = conn.execute(query, params).fetchone()[0]
         return count
     finally:
         conn.close()
@@ -828,8 +832,27 @@ def get_album_candidates(
                 conditions.append(f"({' OR '.join(decade_conditions)})")
 
         where_clause = " AND ".join(conditions)
+        
+        if genres:
+            placeholders = ",".join("?" for _ in genres)
+            normalized_genres = [g.strip().title() for g in genres]
+            # Bind the array twice for the UNION clauses, plus other params
+            params = normalized_genres + normalized_genres + params
+            where_clause += f"""
+                AND tracks.parent_rating_key IN (
+                    SELECT at.album_id FROM album_tags at 
+                    JOIN tags tg ON at.tag_id = tg.id 
+                    WHERE tg.name IN ({placeholders}) AND at.tag_type IN ('genre', 'parent_genre')
+                    UNION
+                    SELECT t2.parent_rating_key FROM tracks t2
+                    JOIN track_tags tt ON t2.rating_key = tt.track_id
+                    JOIN tags tg ON tt.tag_id = tg.id
+                    WHERE tg.name IN ({placeholders}) AND tt.tag_type IN ('genre', 'parent_genre')
+                )
+            """
+
         query = (
-            f"SELECT rating_key, title, artist, album, year, genres, parent_rating_key "
+            f"SELECT rating_key, title, artist, album, year, parent_rating_key "
             f"FROM tracks WHERE {where_clause} "
             f"ORDER BY parent_rating_key, rating_key"
         )
@@ -840,7 +863,6 @@ def get_album_candidates(
         albums: dict[str, dict[str, Any]] = {}
         for row in rows:
             prk = row["parent_rating_key"]
-            track_genres = json.loads(row["genres"]) if row["genres"] else []
 
             if prk not in albums:
                 # Derive decade from year
@@ -856,36 +878,17 @@ def get_album_candidates(
                     # artist column stores grandparentTitle (album artist), not track artist
                     "album_artist": row["artist"],
                     "year": year,
-                    "genres": [],
+                    "genres": [], # Hardcoded empty to drop legacy JSON
                     "decade": decade,
                     "track_count": 0,
                     "track_rating_keys": [],
-                    "_genre_set": set(),
                 }
 
             album = albums[prk]
             album["track_count"] += 1
             album["track_rating_keys"].append(row["rating_key"])
-            for g in track_genres:
-                if g not in album["_genre_set"]:
-                    album["_genre_set"].add(g)
-                    album["genres"].append(g)
 
-        # Apply genre filter in Python (genres stored as JSON)
-        result = []
-        genres_lower = [g.lower() for g in genres] if genres else None
-        for album in albums.values():
-            # Remove internal tracking set
-            del album["_genre_set"]
-
-            if genres_lower:
-                album_genres_lower = [g.lower() for g in album["genres"]]
-                if not any(g in album_genres_lower for g in genres_lower):
-                    continue
-
-            result.append(album)
-
-        return result
+        return list(albums.values())
     finally:
         conn.close()
 

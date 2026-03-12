@@ -189,14 +189,19 @@ def sync_tags_for_track(conn: Any, track: Any, album_meta: dict[str, Any], artis
 
     expanded = expand_tags(list(merged_tags))
 
+    # expanded[] correctly returns strict list lists to support downstream safe insertions 
     upsert_tags(conn, str(track.ratingKey), 'track', expanded['specific'], 'genre')
     upsert_tags(conn, str(track.ratingKey), 'track', expanded['parents'], 'parent_genre')
 
     if album_meta.get('rating_key'):
-        upsert_tags(conn, str(album_meta['rating_key']), 'album', album_tags, 'genre')
+        album_expanded = expand_tags(album_tags)
+        upsert_tags(conn, str(album_meta['rating_key']), 'album', album_expanded['specific'], 'genre')
+        upsert_tags(conn, str(album_meta['rating_key']), 'album', album_expanded['parents'], 'parent_genre')
 
     if artist_meta.get('rating_key'):
-        upsert_tags(conn, str(artist_meta['rating_key']), 'artist', artist_tags, 'genre')
+        artist_expanded = expand_tags(artist_tags)
+        upsert_tags(conn, str(artist_meta['rating_key']), 'artist', artist_expanded['specific'], 'genre')
+        upsert_tags(conn, str(artist_meta['rating_key']), 'artist', artist_expanded['parents'], 'parent_genre')
 
     return bool(merged_tags)
 
