@@ -17,8 +17,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
-from backend.plex_client import sync_tags_for_track
-
 logger = logging.getLogger(__name__)
 
 # Database location
@@ -527,6 +525,8 @@ def sync_library(
     Returns:
         Dict with success, track_count, duration_ms, error
     """
+    from backend.plex_client import sync_tags_for_track
+
     global _sync_state
 
     # Use lock to prevent race condition between check and set
