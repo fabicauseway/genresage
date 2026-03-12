@@ -365,11 +365,7 @@ def get_cached_tracks() -> list[dict[str, Any]]:
         tracks = []
         for row in rows:
             track = dict(row)
-            # Parse genres JSON
-            if track["genres"]:
-                track["genres"] = json.loads(track["genres"])
-            else:
-                track["genres"] = []
+            track["genres"] = []
             tracks.append(track)
 
         return tracks
@@ -584,6 +580,7 @@ def sync_library(
         # Phase 3: Process tracks in batches with album metadata lookup
         synced_count = 0
         batch_data = []
+        batch_meta = []
 
         for i, track in enumerate(all_tracks):
             # Extract track data
@@ -602,8 +599,7 @@ def sync_library(
             last_viewed_at_raw = getattr(track, "lastViewedAt", None)
             last_viewed_at = last_viewed_at_raw.isoformat() if last_viewed_at_raw else None
 
-            # Sync tags via relational pipeline
-            has_tags = sync_tags_for_track(conn, track, album_data, artist_data)
+            batch_meta.append((track, album_data, artist_data))
 
             batch_data.append((
                 str(track.ratingKey),
@@ -643,6 +639,11 @@ def sync_library(
                 # Commit every batch to allow concurrent reads (WAL mode)
                 conn.commit()
 
+                # Write tags after tracks are committed to satisfy FOREIGN KEY
+                for t, a_data, ar_data in batch_meta:
+                    sync_tags_for_track(conn, t, a_data, ar_data)
+                batch_meta.clear()
+
         # Insert remaining tracks
         if batch_data:
             conn.executemany(
@@ -658,6 +659,12 @@ def sync_library(
 
         # Final commit
         conn.commit()
+
+        # Write remaining tags after flush constraints
+        if batch_meta:
+            for t, a_data, ar_data in batch_meta:
+                sync_tags_for_track(conn, t, a_data, ar_data)
+            batch_meta.clear()
 
         # Update sync state
         duration_ms = int((time.time() - start_time) * 1000)
@@ -907,17 +914,11 @@ def get_cached_genre_decade_stats() -> dict[str, list[dict[str, Any]]]:
     """
     conn = ensure_db_initialized()
     try:
-        rows = conn.execute("SELECT genres, year FROM tracks").fetchall()
+        rows = conn.execute("SELECT year FROM tracks").fetchall()
 
-        genre_counts: dict[str, int] = {}
         decade_counts: dict[str, int] = {}
 
         for row in rows:
-            # Tally genres
-            if row["genres"]:
-                for g in json.loads(row["genres"]):
-                    genre_counts[g] = genre_counts.get(g, 0) + 1
-
             # Tally decades
             year = row["year"]
             if year:
@@ -925,14 +926,21 @@ def get_cached_genre_decade_stats() -> dict[str, list[dict[str, Any]]]:
                 decade_name = f"{decade_start}s"
                 decade_counts[decade_name] = decade_counts.get(decade_name, 0) + 1
 
-        genres = sorted(
-            [{"name": name, "count": count} for name, count in genre_counts.items()],
-            key=lambda x: x["name"],
-        )
         decades = sorted(
             [{"name": name, "count": count} for name, count in decade_counts.items()],
             key=lambda x: x["name"],
         )
+
+        genre_rows = conn.execute(
+            """SELECT tg.name, COUNT(DISTINCT tt.track_id) as count
+               FROM tags tg
+               JOIN track_tags tt ON tg.id = tt.tag_id
+               WHERE tt.tag_type = 'parent_genre'
+               GROUP BY tg.name
+               ORDER BY tg.name"""
+        ).fetchall()
+
+        genres = [{"name": row["name"], "count": row["count"]} for row in genre_rows]
 
         return {"genres": genres, "decades": decades}
     finally:
