@@ -563,12 +563,8 @@ async def trigger_library_sync() -> SyncTriggerResponse:
 
 @app.get("/api/library/stats", response_model=LibraryStatsResponse)
 async def get_library_stats() -> LibraryStatsResponse:
-    """Get library statistics."""
-    plex_client = get_plex_client()
-    if not plex_client or not plex_client.is_connected():
-        raise HTTPException(status_code=503, detail="Plex not connected")
-
-    stats = await asyncio.to_thread(plex_client.get_library_stats)
+    """Get library statistics from local cache."""
+    stats = await asyncio.to_thread(library_cache.get_cached_genre_decade_stats)
     return LibraryStatsResponse(
         total_tracks=stats.get("total_tracks", 0),
         genres=[GenreCount(**g) for g in stats.get("genres", [])],
