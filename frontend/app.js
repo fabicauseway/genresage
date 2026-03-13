@@ -1291,40 +1291,39 @@ function updateFilters() {
             moodContainer.closest('.filter-section')?.classList.add('hidden');
         } else {
             moodContainer.closest('.filter-section')?.classList.remove('hidden');
-            moodContainer.innerHTML = visibleMoods.map(mood => {
-                const isSelected = state.selectedMoods.includes(mood.name);
-                const children = getMoodChildrenOf(mood.name);
-                const hasChildren = children.length > 0;
-                const isExpanded = state.expandedMoods.has(mood.name);
+            const moodCategories = Object.keys(state.moodHierarchy);
+            moodContainer.innerHTML = moodCategories.map(category => {
+                const isSelected = state.selectedMoods.includes(category);
+                const children = getMoodChildrenOf(category).filter(
+                    sub => state.availableMoods.some(m => m.name === sub)
+                );
+                const isExpanded = state.expandedMoods.has(category);
 
                 const parentChipHtml = `<button class="chip ${isSelected ? 'selected' : ''}"
-                        data-mood="${escapeHtml(mood.name)}"
+                        data-mood="${escapeHtml(category)}"
                         aria-pressed="${isSelected}">
-                    ${escapeHtml(mood.name)}
-                    ${mood.count != null ? `<span class="chip-count">${mood.count}</span>` : ''}
+                    ${escapeHtml(category)}
                 </button>`;
 
-                if (!hasChildren) return parentChipHtml;
-
-                const arrowHtml = `<button class="chip-expand-arrow ${isExpanded ? 'chip-expand-arrow--open' : ''}"
-                        data-expand-mood="${escapeHtml(mood.name)}"
-                        aria-label="${isExpanded ? 'Collapse' : 'Expand'} moods for ${escapeHtml(mood.name)}"
+                const arrowHtml = children.length > 0 ? `<button class="chip-expand-arrow ${isExpanded ? 'chip-expand-arrow--open' : ''}"
+                        data-expand-mood="${escapeHtml(category)}"
+                        aria-label="${isExpanded ? 'Collapse' : 'Expand'} moods for ${escapeHtml(category)}"
                         aria-expanded="${isExpanded}"
-                        tabindex="0">&#9662;</button>`;
+                        tabindex="0">&#9662;</button>` : '';
 
-                const subrowHtml = isExpanded ? `
+                const subrowHtml = isExpanded && children.length > 0 ? `
                 <div class="chip-subrow">
-                    ${children
-                        .filter(sub => state.availableMoods.some(m => m.name === sub))
-                        .map(sub => {
-                            const subSelected = state.selectedMoods.includes(sub);
-                            return `<button class="chip chip--sub ${subSelected ? 'selected' : ''}"
-                                    data-mood="${escapeHtml(sub)}"
-                                    data-parent-mood="${escapeHtml(mood.name)}"
-                                    aria-pressed="${subSelected}">
-                                ${escapeHtml(sub)}
-                            </button>`;
-                        }).join('')}
+                    ${children.map(sub => {
+                        const subMood = state.availableMoods.find(m => m.name === sub);
+                        const subSelected = state.selectedMoods.includes(sub);
+                        return `<button class="chip chip--sub ${subSelected ? 'selected' : ''}"
+                                data-mood="${escapeHtml(sub)}"
+                                data-parent-mood="${escapeHtml(category)}"
+                                aria-pressed="${subSelected}">
+                            ${escapeHtml(sub)}
+                            ${subMood?.count != null ? `<span class="chip-count">${subMood.count}</span>` : ''}
+                        </button>`;
+                    }).join('')}
                 </div>` : '';
 
                 return `<div class="chip-group">
@@ -4293,39 +4292,38 @@ function renderRecFilterChips() {
             moodContainer.closest('.filter-section')?.classList.add('hidden');
         } else {
             moodContainer.closest('.filter-section')?.classList.remove('hidden');
-            moodContainer.innerHTML = visibleMoods.map(mood => {
-                const isSelected = state.rec.selectedMoods.includes(mood.name);
-                const children = getMoodChildrenOf(mood.name);
-                const hasChildren = children.length > 0;
-                const isExpanded = state.rec.expandedMoods.has(mood.name);
+            const moodCategories = Object.keys(state.moodHierarchy);
+            moodContainer.innerHTML = moodCategories.map(category => {
+                const isSelected = state.rec.selectedMoods.includes(category);
+                const children = getMoodChildrenOf(category).filter(
+                    sub => state.availableMoods.some(m => m.name === sub)
+                );
+                const isExpanded = state.rec.expandedMoods.has(category);
 
                 const parentChipHtml = `<button class="chip ${isSelected ? 'selected' : ''}"
-                        data-mood="${escapeHtml(mood.name)}"
+                        data-mood="${escapeHtml(category)}"
                         aria-pressed="${isSelected}">
-                    ${escapeHtml(mood.name)}
+                    ${escapeHtml(category)}
                 </button>`;
 
-                if (!hasChildren) return parentChipHtml;
-
-                const arrowHtml = `<button class="chip-expand-arrow ${isExpanded ? 'chip-expand-arrow--open' : ''}"
-                        data-expand-mood="${escapeHtml(mood.name)}"
-                        aria-label="${isExpanded ? 'Collapse' : 'Expand'} moods for ${escapeHtml(mood.name)}"
+                const arrowHtml = children.length > 0 ? `<button class="chip-expand-arrow ${isExpanded ? 'chip-expand-arrow--open' : ''}"
+                        data-expand-mood="${escapeHtml(category)}"
+                        aria-label="${isExpanded ? 'Collapse' : 'Expand'} moods for ${escapeHtml(category)}"
                         aria-expanded="${isExpanded}"
-                        tabindex="0">&#9662;</button>`;
+                        tabindex="0">&#9662;</button>` : '';
 
-                const subrowHtml = isExpanded ? `
+                const subrowHtml = isExpanded && children.length > 0 ? `
                 <div class="chip-subrow">
-                    ${children
-                        .filter(sub => state.availableMoods.some(m => m.name === sub))
-                        .map(sub => {
-                            const subSelected = state.rec.selectedMoods.includes(sub);
-                            return `<button class="chip chip--sub ${subSelected ? 'selected' : ''}"
-                                    data-mood="${escapeHtml(sub)}"
-                                    data-parent-mood="${escapeHtml(mood.name)}"
-                                    aria-pressed="${subSelected}">
-                                ${escapeHtml(sub)}
-                            </button>`;
-                        }).join('')}
+                    ${children.map(sub => {
+                        const subMood = state.availableMoods.find(m => m.name === sub);
+                        const subSelected = state.rec.selectedMoods.includes(sub);
+                        return `<button class="chip chip--sub ${subSelected ? 'selected' : ''}"
+                                data-mood="${escapeHtml(sub)}"
+                                data-parent-mood="${escapeHtml(category)}"
+                                aria-pressed="${subSelected}">
+                            ${escapeHtml(sub)}
+                        </button>`;
+                    }).join('')}
                 </div>` : '';
 
                 return `<div class="chip-group">
