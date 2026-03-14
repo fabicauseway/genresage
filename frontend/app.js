@@ -1213,7 +1213,9 @@ function updateFilters() {
     const genreContainer = document.getElementById('genre-chips');
     genreContainer.innerHTML = state.availableGenres.map(genre => {
         const isSelected = state.selectedGenres.includes(genre.name);
-        const children = getChildrenOf(genre.name);
+        const children = getChildrenOf(genre.name)
+            .filter(child => child !== genre.name)
+            .sort((a, b) => a.localeCompare(b));
         const hasChildren = children.length > 0;
         const isExpanded = state.expandedGenres.has(genre.name);
 
@@ -1294,9 +1296,9 @@ function updateFilters() {
             const moodCategories = Object.keys(state.moodHierarchy);
             moodContainer.innerHTML = moodCategories.map(category => {
                 const isSelected = state.selectedMoods.includes(category);
-                const children = getMoodChildrenOf(category).filter(
-                    sub => state.availableMoods.some(m => m.name === sub)
-                );
+                const children = getMoodChildrenOf(category)
+                    .filter(sub => state.availableMoods.some(m => m.name === sub))
+                    .sort((a, b) => a.localeCompare(b));
                 const isExpanded = state.expandedMoods.has(category);
 
                 const parentChipHtml = `<button class="chip ${isSelected ? 'selected' : ''}"
@@ -4238,7 +4240,9 @@ function renderRecFilterChips() {
 
     genreContainer.innerHTML = state.availableGenres.map(genre => {
         const isSelected = state.rec.selectedGenres.includes(genre.name);
-        const children = getChildrenOf(genre.name);
+        const children = getChildrenOf(genre.name)
+            .filter(child => child !== genre.name)
+            .sort((a, b) => a.localeCompare(b));
         const hasChildren = children.length > 0;
         const isExpanded = state.rec.expandedGenres.has(genre.name);
 
@@ -4295,9 +4299,9 @@ function renderRecFilterChips() {
             const moodCategories = Object.keys(state.moodHierarchy);
             moodContainer.innerHTML = moodCategories.map(category => {
                 const isSelected = state.rec.selectedMoods.includes(category);
-                const children = getMoodChildrenOf(category).filter(
-                    sub => state.availableMoods.some(m => m.name === sub)
-                );
+                const children = getMoodChildrenOf(category)
+                    .filter(sub => state.availableMoods.some(m => m.name === sub))
+                    .sort((a, b) => a.localeCompare(b));
                 const isExpanded = state.rec.expandedMoods.has(category);
 
                 const parentChipHtml = `<button class="chip ${isSelected ? 'selected' : ''}"
